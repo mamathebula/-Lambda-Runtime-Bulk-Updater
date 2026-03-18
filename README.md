@@ -144,7 +144,9 @@ All done. Updated 3 functions.
   ```
   ⚠️ Only mix runtimes of the same language — updating a Node.js function to a Python runtime will break it.
 
-## Risks
+## What Gets Deployed
+
+Nothing. This is a standalone bash script that runs on your local machine or AWS CloudShell. It does not create any AWS resources — it only calls the AWS Lambda API to update existing function configurations.
 
 Updating runtimes can break functions. Be aware of the following:
 
