@@ -144,6 +144,30 @@ All done. Updated 3 functions.
   ```
   ⚠️ Only mix runtimes of the same language — updating a Node.js function to a Python runtime will break it.
 
+## Risks
+
+Updating runtimes can break functions. Be aware of the following:
+
+- Deprecated syntax — some language features get removed in newer versions (e.g. Python 3.8 `collections.Mapping` breaks on 3.10+, moved to `collections.abc.Mapping`)
+- Library compatibility — packaged dependencies or Lambda layers may not work with the new runtime version
+- Behavioral changes — subtle differences in string formatting, error handling, or async behavior between versions
+- OS changes — older runtimes run on Amazon Linux 2, newer ones on Amazon Linux 2023. File paths, system libraries, or OS-level dependencies could differ
+- Layer compatibility — Lambda layers compiled for one runtime/OS may not work on another
+
+Risk is higher for:
+- Complex functions with lots of dependencies
+- Functions using native compiled libraries (C extensions, etc.)
+- Functions relying on specific OS-level packages
+
+Risk is lower for:
+- Simple functions with no external dependencies
+- Functions using only the AWS SDK (boto3, aws-sdk)
+
+Recommended safe approach:
+1. Test in a dev/staging environment first
+2. Update one function manually and verify it works
+3. Then run the script for the rest
+
 ## Runtime Reference
 
 | Console Name | Script Value |
