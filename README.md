@@ -1,132 +1,98 @@
-# Lambda Runtime Bulk Updater
+# AWS Resource Cleanup Stack
 
-Bash script that updates the runtime of multiple Lambda functions in parallel across your AWS account.
+Automated CloudFormation stack that deploys a Lambda function to clean up unused AWS resources on a schedule. Sends email notifications before deleting resources and publishes metrics to CloudWatch.
 
-## Prerequisites
+## What It Cleans Up
 
-- AWS CLI installed and configured (`aws configure`)
-- Permissions: `lambda:ListFunctions` and `lambda:UpdateFunctionConfiguration`
+| Resource | Behavior |
+|----------|----------|
+| CloudFormation Stacks | Deleted after configurable time (default 8 hours) |
+| EC2 Instances | Terminated after configurable time (pending, running, stopping, stopped) |
+| S3 Buckets | Emptied and deleted after configurable time (handles versioned objects) |
+| EBS Volumes | Deleted immediately if unattached (`available` status) |
+| EBS Snapshots | Deleted if older than 7 days and not in use by AMIs |
+| Elastic IPs | Released immediately if unassociated |
 
-## Setup
+## How Protection Works
 
-1. Open `update-lambda-runtimes.sh`
-2. Edit these two variables at the top:
+Resources are protected from deletion if any of these apply:
 
-```bash
-OLD_RUNTIMES=("python3.8" "python3.9")   # runtimes to replace
-NEW_RUNTIME="python3.11"                   # runtime to update to
-```
+- Resource name or `Name` tag contains the exclude string (default: `do-not-delete`)
+- CloudFormation stack has termination protection enabled
+- The cleanup stack itself is always protected (matches keywords like `resourcecleanup`, `cleaner`, `cleanup-stack`)
 
-3. (Optional) Set your target region if not using your default:
+## Parameters
 
-```bash
-export AWS_REGION=us-east-1
-```
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MinRunningTimeHours` | `8` | Hours before stacks, instances, and buckets are deleted (1–168) |
+| `NotificationTimeHours` | `4` | Hours before deletion to send a warning email (1–24) |
+| `ExcludeString` | `do-not-delete` | Resources with this string in their name/tags are protected |
+| `NotificationEmail` | *(required)* | Email address for deletion notifications |
+| `ScheduleExpression` | `rate(2 hours)` | EventBridge schedule for how often cleanup runs |
+| `LambdaTimeout` | `900` | Lambda timeout in seconds (60–900) |
 
-## Run
+## Deployment
 
-### Option 1: Local Terminal
+### Deploy via AWS Console
 
-**Step 1: Set up AWS credentials**
+1. Go to CloudFormation → Create Stack → Upload a template file
+2. Upload `aws-resource-cleanup-stack-updated.yaml`
+3. Fill in the parameters (at minimum, provide your email)
+4. Acknowledge IAM resource creation
+5. Create stack
+6. Confirm the SNS subscription email you receive
 
-If you haven't configured the AWS CLI before, run:
-
-```bash
-aws configure
-```
-
-It will prompt you for 4 things:
-
-```
-AWS Access Key ID: paste your access key here
-AWS Secret Access Key: paste your secret key here
-Default region name: us-east-1 (or your preferred region)
-Default output format: json (or just press Enter)
-```
-
-To get your Access Key and Secret Key:
-1. Go to AWS Console → IAM → Users → select your user
-2. Click "Security credentials" tab
-3. Under "Access keys", click "Create access key"
-4. Copy the Access Key ID and Secret Access Key
-
-**Step 2: Verify credentials are working**
+### Deploy via CLI
 
 ```bash
-aws sts get-caller-identity
+aws cloudformation create-stack \
+  --stack-name aws-resource-cleanup \
+  --template-body file://aws-resource-cleanup-stack-updated.yaml \
+  --parameters \
+    ParameterKey=NotificationEmail,ParameterValue=your@email.com \
+    ParameterKey=MinRunningTimeHours,ParameterValue=8 \
+    ParameterKey=ExcludeString,ParameterValue=do-not-delete \
+  --capabilities CAPABILITY_NAMED_IAM
 ```
 
-You should see your account ID and user info. If you get an error, your credentials are wrong.
+## What Gets Created
 
-**Step 3: Run the script**
+- Lambda function (`ResourceCleanupFunction`) — Python 3.9, 512 MB memory
+- IAM role with permissions scoped to the resource types it manages
+- SNS topic (`CFT-Cleaner-Notifications`) with email subscription
+- EventBridge rule to trigger the Lambda on schedule
 
-```bash
-chmod +x update-lambda-runtimes.sh
-./update-lambda-runtimes.sh
-```
+## Notifications
 
-### Option 2: AWS CloudShell (no credentials needed)
+The stack sends two types of email notifications:
 
-1. Log into the AWS Console
-2. Click the CloudShell icon (terminal icon, top right near the search bar)
-3. Make sure you're in the correct region
-4. Click Actions → Upload file → select `update-lambda-runtimes.sh`
-5. Run:
+1. **Warning** — sent during the notification window before a stack is deleted, with details on how to protect it
+2. **Summary** — sent after each run if any resources were deleted, listing counts and names
 
-```bash
-chmod +x update-lambda-runtimes.sh
-./update-lambda-runtimes.sh
-```
+Duplicate warnings are prevented by tagging stacks with `CleanupWarningNotified=true`.
 
-CloudShell uses your console session credentials automatically — no setup required.
+## CloudWatch Metrics
 
-## Example Output
+Metrics are published to the `ResourceCleaner` namespace:
 
-```
-Found functions to update → python3.11:
-MyFunction1    python3.8
-MyFunction2    python3.9
-ApiHandler     python3.9
+- `DeletedStacks`, `ProtectedStacks`, `StackNotifications`
+- `TerminatedInstances`, `ProtectedInstances`
+- `DeletedVolumes`, `ProtectedVolumes`, `VolumeAgeDistribution`
+- `DeletedSnapshots`, `ProtectedSnapshots`, `SnapshotAgeDistribution`
+- `ReleasedElasticIPs`, `ProtectedElasticIPs`
+- `DeletedS3Buckets`, `ProtectedS3Buckets`
+- `FailedDeletions` (with `ResourceType` dimension)
 
-Updating MyFunction1 (python3.8 → python3.11)...
-Updating MyFunction2 (python3.9 → python3.11)...
-Updating ApiHandler (python3.9 → python3.11)...
-✓ MyFunction1 updated
-✓ MyFunction2 updated
-✓ ApiHandler updated
+## IAM Permissions
 
-All done. Updated 3 functions.
-```
+The Lambda role has broad permissions across many AWS services to handle CloudFormation stack deletion (stacks can contain any resource type). Key service permissions include:
 
-## Notes
+EC2, CloudFormation, S3, SNS, CloudWatch, Lambda, API Gateway, DynamoDB, EventBridge, CloudFront, Step Functions, Cloud9, SES, RDS, EKS, ECR, SQS, IAM, Route53, Secrets Manager, Auto Scaling, ELB, ECS, ElastiCache, EFS, MSK, KMS, SSM, Cognito, Image Builder
 
-- Updates run in batches of 10 automatically to avoid AWS API throttling. To change the batch size, edit `count % 10` in the script to your preferred number (e.g. `count % 5` for batches of 5)
-  - Example: 1000 functions = 100 batches of 10. Sends 10 updates in parallel → waits for all 10 to finish → sends the next 10 → repeats until all 1000 are done
-- If a Lambda is managed by CloudFormation, this will cause stack drift — acceptable for bulk runtime upgrades but be aware
-- The script only targets the current region. Run it again with a different `AWS_REGION` for multi-region accounts
-- Common runtime values and examples:
+## Tips
 
-  **Python:**
-  ```bash
-  OLD_RUNTIMES=("python3.8" "python3.9")
-  NEW_RUNTIME="python3.13"
-  ```
-
-  **Node.js:**
-  ```bash
-  OLD_RUNTIMES=("nodejs16.x" "nodejs18.x")
-  NEW_RUNTIME="nodejs20.x"
-  ```
-
-  **Java:**
-  ```bash
-  OLD_RUNTIMES=("java11")
-  NEW_RUNTIME="java21"
-  ```
-
-  **Mixed (all old runtimes at once):**
-  ```bash
-  OLD_RUNTIMES=("python3.8" "python3.9" "nodejs16.x" "java11")
-  NEW_RUNTIME="python3.13"
-  ```
-  ⚠️ Only mix runtimes of the same language — updating a Node.js function to a Python runtime will break it.
+- Set `ExcludeString` to something your team uses consistently, like `prod` or `permanent`
+- Start with a longer `MinRunningTimeHours` (e.g., 24) and reduce once you're comfortable
+- Check CloudWatch Logs at `/aws/lambda/ResourceCleanupFunction` for detailed execution logs
+- The `FORCE_DELETE` environment variable is set to `True` by default — instances are terminated regardless of age when this is enabled
