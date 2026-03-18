@@ -27,12 +27,38 @@ export AWS_REGION=us-east-1
 
 ### Option 1: Local Terminal
 
+**Step 1: Set up AWS credentials**
+
+If you haven't configured the AWS CLI before, run:
+
 ```bash
-aws configure   # set up credentials first
-./update-lambda-runtimes.sh
+aws configure
 ```
 
-If you get a permission denied error:
+It will prompt you for 4 things:
+
+```
+AWS Access Key ID: paste your access key here
+AWS Secret Access Key: paste your secret key here
+Default region name: us-east-1 (or your preferred region)
+Default output format: json (or just press Enter)
+```
+
+To get your Access Key and Secret Key:
+1. Go to AWS Console → IAM → Users → select your user
+2. Click "Security credentials" tab
+3. Under "Access keys", click "Create access key"
+4. Copy the Access Key ID and Secret Access Key
+
+**Step 2: Verify credentials are working**
+
+```bash
+aws sts get-caller-identity
+```
+
+You should see your account ID and user info. If you get an error, your credentials are wrong.
+
+**Step 3: Run the script**
 
 ```bash
 chmod +x update-lambda-runtimes.sh
