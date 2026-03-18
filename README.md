@@ -108,7 +108,14 @@ All done. Updated 3 functions.
 
 - Updates run in batches of 10 automatically to avoid AWS API throttling. To change the batch size, edit `count % 10` in the script to your preferred number (e.g. `count % 5` for batches of 5)
   - Example: 1000 functions = 100 batches of 10. Sends 10 updates in parallel → waits for all 10 to finish → sends the next 10 → repeats until all 1000 are done
-- If a Lambda is managed by CloudFormation, this will cause stack drift — acceptable for bulk runtime upgrades but be aware
+- If a Lambda is managed by CloudFormation, this will cause stack drift:
+  - The Lambda runtime gets updated, but the CloudFormation template still has the old runtime
+  - If the stack is redeployed later, CloudFormation will revert the runtime back to what the template says
+  - To fix this permanently, also update the runtime in the CloudFormation template and redeploy the stack
+  - Recommended approach: run the script first for the immediate upgrade, then update the templates afterwards so future deployments don't revert it
+  - The drift itself doesn't break anything — the Lambda keeps running fine on the new runtime
+  - It only causes issues if: the stack is redeployed (reverts the runtime), the stack is deleted and recreated (uses old runtime), or drift detection audits flag the mismatch
+  - If the stack is never touched again, no problem. But if it's actively maintained, update the template too
 - The script only targets the current region. Run it again with a different `AWS_REGION` for multi-region accounts
 - Common runtime values and examples:
 
