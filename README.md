@@ -71,7 +71,12 @@ chmod +x update-lambda-runtimes.sh
 2. Click the CloudShell icon (terminal icon, top right near the search bar)
 3. Make sure you're in the correct region
 4. Click Actions → Upload file → select `update-lambda-runtimes.sh`
-5. If re-uploading, delete the old file first: `rm update-lambda-runtimes.sh`
+5. If re-uploading, delete the old file first then re-upload:
+
+```bash
+rm update-lambda-runtimes.sh
+```
+
 6. Run:
 
 ```bash
