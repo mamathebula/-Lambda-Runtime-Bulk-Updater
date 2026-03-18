@@ -1,98 +1,158 @@
-# AWS Resource Cleanup Stack
+# Lambda Runtime Bulk Updater
 
-Automated CloudFormation stack that deploys a Lambda function to clean up unused AWS resources on a schedule. Sends email notifications before deleting resources and publishes metrics to CloudWatch.
+Bash script that updates the runtime of multiple Lambda functions in parallel across your AWS account.
 
-## What It Cleans Up
+## Prerequisites
 
-| Resource | Behavior |
-|----------|----------|
-| CloudFormation Stacks | Deleted after configurable time (default 8 hours) |
-| EC2 Instances | Terminated after configurable time (pending, running, stopping, stopped) |
-| S3 Buckets | Emptied and deleted after configurable time (handles versioned objects) |
-| EBS Volumes | Deleted immediately if unattached (`available` status) |
-| EBS Snapshots | Deleted if older than 7 days and not in use by AMIs |
-| Elastic IPs | Released immediately if unassociated |
+- AWS CLI installed and configured (`aws configure`)
+- Permissions: `lambda:ListFunctions` and `lambda:UpdateFunctionConfiguration`
 
-## How Protection Works
+## Setup
 
-Resources are protected from deletion if any of these apply:
-
-- Resource name or `Name` tag contains the exclude string (default: `do-not-delete`)
-- CloudFormation stack has termination protection enabled
-- The cleanup stack itself is always protected (matches keywords like `resourcecleanup`, `cleaner`, `cleanup-stack`)
-
-## Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `MinRunningTimeHours` | `8` | Hours before stacks, instances, and buckets are deleted (1–168) |
-| `NotificationTimeHours` | `4` | Hours before deletion to send a warning email (1–24) |
-| `ExcludeString` | `do-not-delete` | Resources with this string in their name/tags are protected |
-| `NotificationEmail` | *(required)* | Email address for deletion notifications |
-| `ScheduleExpression` | `rate(2 hours)` | EventBridge schedule for how often cleanup runs |
-| `LambdaTimeout` | `900` | Lambda timeout in seconds (60–900) |
-
-## Deployment
-
-### Deploy via AWS Console
-
-1. Go to CloudFormation → Create Stack → Upload a template file
-2. Upload `aws-resource-cleanup-stack-updated.yaml`
-3. Fill in the parameters (at minimum, provide your email)
-4. Acknowledge IAM resource creation
-5. Create stack
-6. Confirm the SNS subscription email you receive
-
-### Deploy via CLI
+1. Open `update-lambda-runtimes.sh`
+2. Edit these two variables at the top:
 
 ```bash
-aws cloudformation create-stack \
-  --stack-name aws-resource-cleanup \
-  --template-body file://aws-resource-cleanup-stack-updated.yaml \
-  --parameters \
-    ParameterKey=NotificationEmail,ParameterValue=your@email.com \
-    ParameterKey=MinRunningTimeHours,ParameterValue=8 \
-    ParameterKey=ExcludeString,ParameterValue=do-not-delete \
-  --capabilities CAPABILITY_NAMED_IAM
+OLD_RUNTIMES=("python3.8" "python3.9")   # runtimes to replace
+NEW_RUNTIME="python3.11"                   # runtime to update to
 ```
 
-## What Gets Created
+3. (Optional) Set your target region if not using your default:
 
-- Lambda function (`ResourceCleanupFunction`) — Python 3.9, 512 MB memory
-- IAM role with permissions scoped to the resource types it manages
-- SNS topic (`CFT-Cleaner-Notifications`) with email subscription
-- EventBridge rule to trigger the Lambda on schedule
+```bash
+export AWS_REGION=us-east-1
+```
 
-## Notifications
+## Run
 
-The stack sends two types of email notifications:
+### Option 1: Local Terminal
 
-1. **Warning** — sent during the notification window before a stack is deleted, with details on how to protect it
-2. **Summary** — sent after each run if any resources were deleted, listing counts and names
+**Step 1: Set up AWS credentials**
 
-Duplicate warnings are prevented by tagging stacks with `CleanupWarningNotified=true`.
+If you haven't configured the AWS CLI before, run:
 
-## CloudWatch Metrics
+```bash
+aws configure
+```
 
-Metrics are published to the `ResourceCleaner` namespace:
+It will prompt you for 4 things:
 
-- `DeletedStacks`, `ProtectedStacks`, `StackNotifications`
-- `TerminatedInstances`, `ProtectedInstances`
-- `DeletedVolumes`, `ProtectedVolumes`, `VolumeAgeDistribution`
-- `DeletedSnapshots`, `ProtectedSnapshots`, `SnapshotAgeDistribution`
-- `ReleasedElasticIPs`, `ProtectedElasticIPs`
-- `DeletedS3Buckets`, `ProtectedS3Buckets`
-- `FailedDeletions` (with `ResourceType` dimension)
+```
+AWS Access Key ID: paste your access key here
+AWS Secret Access Key: paste your secret key here
+Default region name: us-east-1 (or your preferred region)
+Default output format: json (or just press Enter)
+```
 
-## IAM Permissions
+To get your Access Key and Secret Key:
+1. Go to AWS Console → IAM → Users → select your user
+2. Click "Security credentials" tab
+3. Under "Access keys", click "Create access key"
+4. Copy the Access Key ID and Secret Access Key
 
-The Lambda role has broad permissions across many AWS services to handle CloudFormation stack deletion (stacks can contain any resource type). Key service permissions include:
+**Step 2: Verify credentials are working**
 
-EC2, CloudFormation, S3, SNS, CloudWatch, Lambda, API Gateway, DynamoDB, EventBridge, CloudFront, Step Functions, Cloud9, SES, RDS, EKS, ECR, SQS, IAM, Route53, Secrets Manager, Auto Scaling, ELB, ECS, ElastiCache, EFS, MSK, KMS, SSM, Cognito, Image Builder
+```bash
+aws sts get-caller-identity
+```
 
-## Tips
+You should see your account ID and user info. If you get an error, your credentials are wrong.
 
-- Set `ExcludeString` to something your team uses consistently, like `prod` or `permanent`
-- Start with a longer `MinRunningTimeHours` (e.g., 24) and reduce once you're comfortable
-- Check CloudWatch Logs at `/aws/lambda/ResourceCleanupFunction` for detailed execution logs
-- The `FORCE_DELETE` environment variable is set to `True` by default — instances are terminated regardless of age when this is enabled
+**Step 3: Run the script**
+
+```bash
+chmod +x update-lambda-runtimes.sh
+./update-lambda-runtimes.sh
+```
+
+### Option 2: AWS CloudShell (no credentials needed)
+
+1. Log into the AWS Console
+2. Click the CloudShell icon (terminal icon, top right near the search bar)
+3. Make sure you're in the correct region
+4. Click Actions → Upload file → select `update-lambda-runtimes.sh`
+5. If re-uploading, delete the old file first: `rm update-lambda-runtimes.sh`
+6. Run:
+
+```bash
+chmod +x update-lambda-runtimes.sh
+./update-lambda-runtimes.sh
+```
+
+CloudShell uses your console session credentials automatically — no setup required.
+
+## Example Output
+
+```
+Found functions to update → python3.11:
+MyFunction1    python3.8
+MyFunction2    python3.9
+ApiHandler     python3.9
+
+Updating MyFunction1 (python3.8 → python3.11)...
+Updating MyFunction2 (python3.9 → python3.11)...
+Updating ApiHandler (python3.9 → python3.11)...
+✓ MyFunction1 updated
+✓ MyFunction2 updated
+✓ ApiHandler updated
+
+All done. Updated 3 functions.
+```
+
+## Notes
+
+- Updates run in batches of 10 automatically to avoid AWS API throttling. To change the batch size, edit `count % 10` in the script to your preferred number (e.g. `count % 5` for batches of 5)
+  - Example: 1000 functions = 100 batches of 10. Sends 10 updates in parallel → waits for all 10 to finish → sends the next 10 → repeats until all 1000 are done
+- If a Lambda is managed by CloudFormation, this will cause stack drift — acceptable for bulk runtime upgrades but be aware
+- The script only targets the current region. Run it again with a different `AWS_REGION` for multi-region accounts
+- Common runtime values and examples:
+
+  **Python:**
+  ```bash
+  OLD_RUNTIMES=("python3.8" "python3.9")
+  NEW_RUNTIME="python3.13"
+  ```
+
+  **Node.js:**
+  ```bash
+  OLD_RUNTIMES=("nodejs16.x" "nodejs18.x")
+  NEW_RUNTIME="nodejs20.x"
+  ```
+
+  **Java:**
+  ```bash
+  OLD_RUNTIMES=("java11")
+  NEW_RUNTIME="java21"
+  ```
+
+  **Mixed (all old runtimes at once):**
+  ```bash
+  OLD_RUNTIMES=("python3.8" "python3.9" "nodejs16.x" "java11")
+  NEW_RUNTIME="python3.13"
+  ```
+  ⚠️ Only mix runtimes of the same language — updating a Node.js function to a Python runtime will break it.
+
+## Runtime Reference
+
+| Console Name | Script Value |
+|---|---|
+| .NET 8 (C#/F#/PowerShell) | `dotnet8` |
+| .NET 10 (C#/F#/PowerShell) | `dotnet10` |
+| Java 8 on Amazon Linux 2 | `java8.al2` |
+| Java 11 | `java11` |
+| Java 17 | `java17` |
+| Java 21 | `java21` |
+| Java 25 | `java25` |
+| Node.js 20.x | `nodejs20.x` |
+| Node.js 22.x | `nodejs22.x` |
+| Node.js 24.x | `nodejs24.x` |
+| Python 3.10 | `python3.10` |
+| Python 3.11 | `python3.11` |
+| Python 3.12 | `python3.12` |
+| Python 3.13 | `python3.13` |
+| Python 3.14 | `python3.14` |
+| Ruby 3.2 | `ruby3.2` |
+| Ruby 3.3 | `ruby3.3` |
+| Ruby 3.4 | `ruby3.4` |
+| Amazon Linux 2 | `provided.al2` |
+| Amazon Linux 2023 | `provided.al2023` |
